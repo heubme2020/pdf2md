@@ -1,8 +1,18 @@
 # pdf2md — financial statements to Markdown
 
-Convert full-text financial reports (annual / semi-annual / quarterly) from China, Japan, Taiwan, Korea and the US into **verbatim, well-structured Markdown**, ready for LLM / RAG consumption.
+Convert full-text financial reports (annual / semi-annual / quarterly) from China, Japan, Taiwan, Korea, the US and the UK into **verbatim, well-structured Markdown**, ready for LLM / RAG consumption.
 
 Core principle: **markets with XBRL take the clean path (read structure directly, zero parsing ambiguity); markets without XBRL reconstruct structure from the PDF**. Numbers are always **transcribed verbatim** — never "rewritten" by a vision model.
+
+---
+
+## v14: UK ESEF (new market)
+
+The UK files annual reports in **ESEF iXBRL** — an XHTML wrapper whose layout is a PDF-style text layer (no `<h1>`/`<table>`, text placed by x/y coordinates + font size). v14 adds `_uk_esef_to_md` in `unified_convert.py`: `<table>` → Markdown tables, everything else → paragraphs, `ix:` tags stripped, `<body>` only. Numbers stay verbatim.
+
+| Change | Where | Effect |
+|---|---|---|
+| UK ESEF structuring (`<table>`→Markdown table + text paragraphs) | `unified_convert._uk_esef_to_md` | Replaces the v13 "one line per `</div>`" flat dump (0 tables, CSS leakage) with structured tables + paragraphs |
 
 ---
 
@@ -82,6 +92,9 @@ md = convert("sse", "600519_2025-12-31_annual_xxx.pdf",
 md = convert("jpx", "7203/S100XXXX.zip", meta={})
 
 # Taiwan MOPS iXBRL HTML / Korea DART XML — same entry point
+
+# UK ESEF ZIP
+md = convert("lse", "LEI-period-ESEF-GB-version.zip", meta={})
 ```
 
 ---
@@ -93,7 +106,7 @@ pdf_to_md.py        A-share PDF → MD (line + find_tables detection, frameless 
 edinet_html.py      Japan/Taiwan/US iXBRL → MD (table restoration + $ sign merge)
 html_tables.py      HTML tables → grid (rowspan/colspan, △ negative numbers)
 table_detect.py     Ruled-table / line detection (incl. _row_boundaries word-y row split)
-unified_convert.py  Unified entry point that dispatches by exchange
+unified_convert.py  Unified entry point that dispatches by exchange (incl. UK ESEF)
 converter_version.py  Single monotonic version number (bump on any converter change)
 edinet_xbrl.py      EDINET iXBRL ZIP chapter extraction
 dart_fetch.py       Korea DART XML → MD

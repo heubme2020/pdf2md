@@ -1,5 +1,15 @@
 # Changelog
 
+## v14 — 2026-10-07: UK ESEF (new market)
+
+The UK files annual reports in **ESEF iXBRL** — an XHTML wrapper whose layout is a PDF-style text layer (no `<h1>`/`<table>`, text placed by x/y coordinates + font size). v14 adds a structured converter for it.
+
+- `_uk_esef_to_md` (`unified_convert.py`): `<table>` → Markdown tables, everything else → paragraphs, `ix:` tags stripped, `<body>` only.
+- Replaces the v13 "one line per `</div>`" flat dump (0 tables + `<style>` CSS leakage) with structured tables + paragraphs.
+- Numbers stay verbatim (no OCR, no rewrite).
+
+---
+
 ## v13 — 2026-10-07: frameless balance-sheet extraction
 
 The big fix for the biggest failure mode: Japan/Taiwan balance sheets use **whitespace column alignment instead of ruled lines**, so the old line-based detector couldn't find the totals at all — A1 accounting identity passed on only **2%** of Japan/Taiwan reports.
