@@ -71,6 +71,8 @@ SOURCE_BY_EXCHANGE = {
     "jpx": "EDINET",
     "twse": "公開資訊觀測站 MOPS", "tpex": "公開資訊觀測站 MOPS",
     "hkex": "HKEXnews", "sgx": "SGX",
+    "lse": "FCA NSM",
+    "nse": "NSE / BSE",
 }
 
 
@@ -398,27 +400,181 @@ def _detect_tables_text(page, min_cols=2, min_rows=2):
     return out
 
 
-def _detect_tables(page):
-    """表格检测：**线条法 + 文本法合并**（不是"找不到才回退"）。
+def _detect_tables_boxed(page, min_cols=2, min_rows=2):
+    """PyMuPDF 自带 find_tables(strategy="lines") 检测**框线表**（横竖线都有，台湾/日本财报常用）。
 
-    为什么是合并而不是回退：线条法常常只在**部分页**命中（实测日本文档A 8 页里只中 3 页），
-    若"有结果就不看文本法"，剩下 5 页的表格照样全丢。
-    合并时把与线条法结果重叠的文本表剔掉，避免同一张表出现两次。
+    为什么要有这条：手写 table_detect 对华康字体的框线表会糊成一团（台积电 2014 那种，
+    数字粘连、列合并、章节串台）。find_tables(lines) 用横竖线+文本定位切单元格，比手写强得多
+    （实测同一份文档 82 张 vs 16 张）。
 
-    ⚠️ 2026-10-01 教训：曾改成「逐页回退」（本页线条法有结果就跳过 find_tables），
-    结果日本 XBRL 值召回从 96.5% 掉到 73.3%（-23 点）—— 因为附注里**大量无框线表和线表同页**，
-    回退把它们全丢了。find_tables 在三线表页的「流|動資産合計」垃圾只是**外观污染**（正确值仍在），
-    为外观丢实值不划算，故回滚为合并+去重。真要修垃圾，应该去改 `_bbox_overlap` 的去重，
-    或过滤 find_tables 的错切表，而不是整个跳过 find_tables。
+    代价同 _detect_tables_text：会误检（页眉/封面横线可能被当表），由 _detect_tables 的合并去重
+    和基准 A1/A2 指标来验证净胜。
     """
+    try:
+        found = page.find_tables(strategy="lines")
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for t in getattr(found, "tables", []) or []:
+        try:
+            grid = t.extract()
+        except Exception:  # noqa: BLE001
+            continue
+        if not grid or len(grid) < min_rows:
+            continue
+        if getattr(t, "col_count", 0) < min_cols:
+            continue
+        rows = [[(c or "") for c in row] for row in grid]
+        rows = [r for r in rows if any(c.strip() for c in r)]      # 丢掉全空行
+        if len(rows) < min_rows:
+            continue
+        if not any(any(c.strip() for c in row) for row in rows):
+            continue
+        out.append({"bbox": tuple(t.bbox), "grid": rows})
+    return out
+
+
+def _detect_tables(page):
+    """表格检测：**框线法 + 线条法 + 文本法合并去重**（不是"找不到才回退"）。
+
+    三种策略各管一类表，合并时重叠去重（同一张表被多策略各检测到一次）：
+      · 框线法(find_tables lines) → 台湾/日本框线表（华康字体那种，手写糊成一团）
+      · 线条法(手写)             → A股三线表（find_tables lines 认不出三线表）
+      · 文本法(find_tables text)  → 无框线表
+
+    框线法放最前：当框线表和手写线表重叠时，留 find_tables(lines) 那份（单元格切得对），
+    丢手写那份（糊的）。⚠️ 2026-10-01 教训（日本值召回 -23 点）是「别整页跳过 find_tables」，
+    不是「别加 find_tables」—— find_tables 在三线表页的垃圾只是外观污染，正确值仍在。
+    """
+    # v13：无框线资产负债表 → 行解析法（替换文本法那坨碎表）
+    bs = _detect_balance_sheet(page)
+    if bs:
+        return bs
+
+    boxed_tables = _detect_tables_boxed(page)
     line_tables = _detect_tables_lines(page)
     text_tables = _detect_tables_text(page)
-    out = list(line_tables)
-    for t in text_tables:
-        if any(_bbox_overlap(t["bbox"], lt["bbox"]) for lt in line_tables):
+    out = list(boxed_tables)
+    for t in line_tables + text_tables:
+        if any(_bbox_overlap(t["bbox"], lt["bbox"]) for lt in out):
             continue
         out.append(t)
     return out
+
+
+# ---- v13：无框线资产负债表「行解析」----
+#
+# 无框线资产负债表（台湾/日本）没有框线，find_tables(text) 会把它按「金额右对齐」切碎成
+# 二十几列碎片。正路是按「行」解析：每行开头是 4 位科目代码，后面跟着科目名和金额。
+# 见 memory `balance-sheet-line-parsing`（A1 自洽 87%）。
+_BS_CODE = re.compile(r"^\d{4}$")
+_BS_AMT = re.compile(r"^\$?([\d,]+)$")
+# 总计标签（资产/负债/权益），search + CJK 负向后看：
+#   · 匹配「代码前缀 + 标签」同行（如「0.77 2xxx 負債總計」，6198 那类）
+#   · 排除「流動/非流動資產合計」「負債及權益總計」（其标签前一个字符是 CJK）
+# 权益总额两种叫法都认：年報「權益總計/總額」、個體財務報告(IFRS)「股東權益淨額」。
+_BS_TOTAL = {
+    "assets": re.compile(r"(?<![一-龥])資?\s*產\s*(?:總|合)\s*(?:計|額)"),
+    "liab": re.compile(r"(?<![一-龥])負\s*債\s*(?:總|合)\s*(?:計|額)"),
+    "equity": re.compile(r"(?<![一-龥])(?:股\s*東\s*)?權\s*益\s*(?:(?:總|合)\s*(?:計|額)|淨\s*(?:額|值))"),
+}
+# 总计科目代码兜底（标签被 get_text 断开时，代码紧贴金额；21xx/25xx 子计不会被匹配）
+_BS_TOTAL_CODE = {"assets": re.compile(r"^1[xX]{3}$"), "liab": re.compile(r"^2[xX]{3}$"), "equity": re.compile(r"^3[xX]{3}$")}
+# 代码兜底时表格行用规范标签（而不是 "2xxx"）
+_BS_TOTAL_LABEL = {"assets": "資產總計", "liab": "負債總計", "equity": "權益總計"}
+
+
+def _is_balance_sheet(text):
+    """判断这页是不是「无框线资产负债表」（4 位科目代码 + 现金及约当现金）。"""
+    nospace = text.replace(" ", "").replace("　", "")
+    return (
+        "資產負債表" in nospace
+        and "現金及約當現金" in nospace
+        and "流動資產" in nospace   # 行项目信号，避开附注正文（2637 误匹配根因）
+        and any(_BS_CODE.match(l.strip()) for l in text.splitlines())
+    )
+
+
+def _first_amount(lines, start):
+    """从 start 行往后找第一个「带逗号的大数」（5~12 位），遇到下一个科目代码就停。"""
+    for j in range(start, min(start + 8, len(lines))):
+        if _BS_CODE.match(lines[j].strip()):
+            break
+        for tok in lines[j].strip().split():
+            m = _BS_AMT.match(tok)
+            if m and 5 <= len(m.group(1).replace(",", "")) <= 12:
+                return m.group(1)
+    return ""
+
+
+def _first_name(lines, start):
+    """从 start 行往后找第一个「科目名」：非空、非 4 位码、非金额/符号；遇下个科目码就停。
+
+    三线表里 get_text 常把「码 / 空行 / 科目名 / 空行 / $ / 金额」拆成多行（实测個體 A01），
+    科目名不在 start 正下方而在隔一两行之后，所以要容错往前找。
+    """
+    for j in range(start, min(start + 6, len(lines))):
+        s = lines[j].strip()
+        if not s:
+            continue
+        if _BS_CODE.match(s):
+            break
+        if _BS_AMT.match(s) or s in ("$", "¥", "%", "％"):
+            break
+        return s
+    return ""
+
+
+def _find_total(lines, pat, code_pat):
+    """找总计：标签(search+负向后看) 优先，标签断开时用科目代码兜底。返回 (label, amount)。
+
+    label 为空串表示走了代码兜底（调用方填规范标签，如「負債總計」而非「2xxx」）。
+    """
+    for j, l in enumerate(lines):
+        if pat.search(l):
+            amt = _first_amount(lines, j + 1)
+            if amt:
+                return l.strip().replace(" ", ""), amt
+    for j, l in enumerate(lines):
+        if code_pat.match(l.strip()):
+            amt = _first_amount(lines, j + 1)
+            if amt:
+                return "", amt
+    return "", ""
+
+
+def _parse_balance_sheet(text):
+    """按「行」解析无框线资产负债表 → grid（科目名 | 金额）。
+
+    行项目 = 4 位科目代码 + 下一行科目名 + 金额；总计行（資產總計等）没有科目代码，
+    单独按标签识别（资产/负债/权益三个总计各一行）。
+    """
+    lines = text.splitlines()
+    grid = [["科目", "金額"]]
+    # 1. 行项目：只认 1XXX/2XXX/3XXX（资产/负债/权益）。4XXX+ 是损益表/现金流量表，
+    #    跨页拼接时会把损益表项目也吃进来，必须过滤（2026-10-04 实测個體 A01 混入 6XXX/9XXX）。
+    i = 0
+    while i < len(lines):
+        s = lines[i].strip()
+        if _BS_CODE.match(s) and s[0] in "123":
+            name = _first_name(lines, i + 1)
+            amt = _first_amount(lines, i + 1)
+            grid.append([name or s, amt])
+        i += 1
+    # 2. 总计行（无科目代码）；标签断开时用代码 1xxx/2xxx/3xxx 兜底
+    for kind, pat in _BS_TOTAL.items():
+        label, amt = _find_total(lines, pat, _BS_TOTAL_CODE[kind])
+        grid.append([label or _BS_TOTAL_LABEL[kind], amt])
+    return grid
+
+
+def _detect_balance_sheet(page):
+    """无框线资产负债表页 → 用行解析法产出一个「科目名|金额」表（替换文本法的碎表）。"""
+    text = page.get_text()
+    if not _is_balance_sheet(text):
+        return []
+    return [{"bbox": (0, 0, page.rect.width, page.rect.height),
+             "grid": _parse_balance_sheet(text)}]
 
 
 def convert(pdf_path, out_path, page_range=None, meta=None, table_detector=None):
@@ -435,12 +591,30 @@ def convert(pdf_path, out_path, page_range=None, meta=None, table_detector=None)
     md = []
     detector = table_detector or _detect_tables
 
-    for page in pages:
+    # v13：预扫无框线资产负债表（常跨页），拼页解析，主循环里跳过被吃掉的后续页
+    bs_grid = {}  # start_idx -> 拼接后的 grid
+    for idx, page in enumerate(pages):
+        if _is_balance_sheet(page.get_text()):
+            text = page.get_text()
+            for k in (1, 2):
+                if idx + k < len(pages):
+                    text += "\n" + pages[idx + k].get_text()
+            bs_grid[idx] = _parse_balance_sheet(text)
+
+    skip_until = -1
+    for idx, page in enumerate(pages):
+        if idx < skip_until:
+            continue
         page_h = page.rect.height
         # 1. 检测表格(线条法 + 文本法合并；见 _detect_tables 的说明。
         #    ⚠️ 这里原来写着「find_tables 在 pymupdf>=1.28 已不可用」——**那是错的**，
         #    实测 1.28.2 上完全可用，而且正是它救了日台的无框线表格。)
-        tables = detector(page)
+        if idx in bs_grid:
+            # 无框线资产负债表：用行解析的干净表替换 find_tables 的碎表，并吃掉后续 2 页
+            tables = [{"bbox": (0, 0, page.rect.width, page.rect.height), "grid": bs_grid[idx]}]
+            skip_until = idx + 3
+        else:
+            tables = detector(page)
         table_bboxes = [t["bbox"] for t in tables]
 
         # 2. 收集文本块(排除表格区域、页眉页脚)
