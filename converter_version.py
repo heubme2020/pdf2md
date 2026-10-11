@@ -13,4 +13,4 @@
 ⚠️ 版本号必须是**单调递增**的整数。改算法时 bump，别复用旧值 —— 否则
 「版本 == 线上」会让重转判据失效（doc_needs_reprocess 只认 !=）。
 """
-CONVERTER_VERSION = 14  # v14 英国 ESEF 结构化；v13 无框线资产负债表行解析（日本 A1 2%→86.6%）
+CONVERTER_VERSION = 15  # v15 A股三线表列数判据去重 + 通用跨页表合并 + FMP 三大表真值；v14 英国 ESEF 结构化

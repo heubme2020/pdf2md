@@ -1,5 +1,24 @@
 # Changelog
 
+## v15 — 2026-10-11: A-share table dedup fix + FMP 3-statement truth
+
+### What changed
+
+1. **A-share three-line table dedup fix** (`pdf_to_md._detect_tables`)
+   `find_tables(strategy="lines")` over-splits A-share three-line tables (horizontal rules only) into 9 columns and truncates wrapped labels ("…的影响" split off). The merge now prefers the handwritten line detector when the boxed table has **>2 more columns** than it (over-split), while still preferring `find_tables(lines)` for HuaKang boxed tables (Japan/Taiwan, where the handwritten detector smears text).
+
+2. **Generic cross-page table merge** (`pdf_to_md.convert`)
+   A table block ending at the page bottom and continuing at the next page top (same column count) is merged into one table instead of two fragments.
+
+3. **FMP truth extended to all three statements** (`fmp_source`)
+   Adds income-statement (`revenue`/`operatingIncome`/`incomeBeforeTax`/`netIncome`) and cash-flow (`operatingCashFlow`/`netCashProvidedByInvestingActivities`/`netCashProvidedByFinancingActivities`) fields, with a `FIELD_STATEMENT` mapping to pick each field from its own statement. `labeled_facts` now reads all three statements.
+
+### Verification
+
+Frozen test set (52 A-share reports, `_cashflow_eval.py`), cash-flow **C1 identity** (期末 = 期初 + 经营 + 投资 + 筹资 + 汇率): **51.6% → 71.1%**. Japan FMP pairing unchanged (60% before = after), confirming no regression on the iXBRL path.
+
+---
+
 ## v14 — 2026-10-07: UK ESEF (new market)
 
 The UK files annual reports in **ESEF iXBRL** — an XHTML wrapper whose layout is a PDF-style text layer (no `<h1>`/`<table>`, text placed by x/y coordinates + font size). v14 adds a structured converter for it.

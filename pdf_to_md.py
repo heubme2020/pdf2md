@@ -454,11 +454,20 @@ def _detect_tables(page):
     boxed_tables = _detect_tables_boxed(page)
     line_tables = _detect_tables_lines(page)
     text_tables = _detect_tables_text(page)
+
+    def _cols(t):
+        g = t.get("grid") or []
+        return len(g[0]) if g else 0
+
     out = list(boxed_tables)
     for t in line_tables + text_tables:
-        if any(_bbox_overlap(t["bbox"], lt["bbox"]) for lt in out):
+        dup = [lt for lt in out if _bbox_overlap(t["bbox"], lt["bbox"])]
+        if not dup:
+            out.append(t)
             continue
-        out.append(t)
+        if any(_cols(lt) > _cols(t) + 2 for lt in dup):
+            out = [lt for lt in out if lt not in dup]
+            out.append(t)
     return out
 
 
@@ -577,6 +586,30 @@ def _detect_balance_sheet(page):
              "grid": _parse_balance_sheet(text)}]
 
 
+_NUM_CELL = re.compile(r"^-?[\d,]+(?:\.\d+)?$")
+
+
+def _merge_wrapped_label_cells(grid):
+    """合并「宽表标签被拆成多 cell」的碎格：把「首个数字 cell 之前的所有非空 cell」拼回一个标签。
+
+    宽现金流表（600029 南方航空）标签「筹资活动产生/(使用)的现金流量净额」换行后，
+    find_tables 把它拆成「筹资活动产生/(使用」+「)」+「的现金流量净额」三个 cell。
+    这里把数字 cell 之前的所有非空 cell 拼成一个标签，数字 cell 及其后原样保留。
+    """
+    if not grid:
+        return grid
+    out = []
+    for row in grid:
+        cells = [str(c or "") for c in row]
+        fi = next((i for i, c in enumerate(cells) if _NUM_CELL.match(c.strip())), None)
+        if fi is None:
+            out.append(list(row))
+            continue
+        label = "".join(c for c in cells[:fi] if c.strip())
+        out.append([label] + cells[fi:])
+    return out
+
+
 def convert(pdf_path, out_path, page_range=None, meta=None, table_detector=None):
     """转换整份公告为 markdown
 
@@ -601,6 +634,34 @@ def convert(pdf_path, out_path, page_range=None, meta=None, table_detector=None)
                     text += "\n" + pages[idx + k].get_text()
             bs_grid[idx] = _parse_balance_sheet(text)
 
+    # v15/P0：预扫所有页的表格，合并「跨页表」——
+    #   页尾表底边贴页底(<=25pt) + 下一页页首表顶边贴页顶(<25pt) + 两表列数相同 → 拼成一张。
+    page_tables = {}  # idx -> [table, ...]
+    for idx, page in enumerate(pages):
+        if idx in bs_grid:
+            page_tables[idx] = [{"bbox": (0, 0, page.rect.width, page.rect.height),
+                                 "grid": bs_grid[idx]}]
+        else:
+            page_tables[idx] = detector(page)
+    merged_skip = set()  # (idx, 表序号) 被上一页合并吞掉、主循环跳过
+    for idx in range(len(pages) - 1):
+        if idx in bs_grid or idx + 1 in bs_grid:
+            continue  # 资产负债表页已有自己的拼页，别双重处理
+        a = page_tables.get(idx) or []
+        b = page_tables.get(idx + 1) or []
+        if not a or not b:
+            continue
+        t_last, t_first = a[-1], b[0]
+        g_last = t_last.get("grid") or []
+        g_first = t_first.get("grid") or []
+        if (g_last and g_first
+                and len(g_last[0]) == len(g_first[0])
+                and t_last["bbox"][3] > pages[idx].rect.height - 25
+                and t_first["bbox"][1] < 25):
+            # 合并：第二个表首行若和第一个表首行相同（重复表头）则去掉，其余行拼接
+            t_last["grid"] = g_last + (g_first[1:] if g_first[0] == g_last[0] else g_first)
+            merged_skip.add((idx + 1, 0))
+
     skip_until = -1
     for idx, page in enumerate(pages):
         if idx < skip_until:
@@ -610,11 +671,8 @@ def convert(pdf_path, out_path, page_range=None, meta=None, table_detector=None)
         #    ⚠️ 这里原来写着「find_tables 在 pymupdf>=1.28 已不可用」——**那是错的**，
         #    实测 1.28.2 上完全可用，而且正是它救了日台的无框线表格。)
         if idx in bs_grid:
-            # 无框线资产负债表：用行解析的干净表替换 find_tables 的碎表，并吃掉后续 2 页
-            tables = [{"bbox": (0, 0, page.rect.width, page.rect.height), "grid": bs_grid[idx]}]
             skip_until = idx + 3
-        else:
-            tables = detector(page)
+        tables = [t for j, t in enumerate(page_tables.get(idx) or []) if (idx, j) not in merged_skip]
         table_bboxes = [t["bbox"] for t in tables]
 
         # 2. 收集文本块(排除表格区域、页眉页脚)

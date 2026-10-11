@@ -70,10 +70,45 @@ FIELD_LABELS = {
     "cashAndCashEquivalents":  ["货币资金"],
     "inventory":               ["存货"],
     "totalDebt":               ["负债合计"],      # 弱同义，可选
+    # 利润表（v15：三大表都要真值）
+    "revenue":                 ["营业收入", "营业总收入"],
+    "operatingIncome":         ["营业利润"],
+    "incomeBeforeTax":         ["利润总额", "税前利润"],
+    "netIncome":               ["净利润", "归属于母公司股东的净利润"],
+    # 现金流量表
+    "operatingCashFlow":       ["经营活动产生的现金流量净额", "经营活动现金流量净额"],
+    "netCashProvidedByInvestingActivities": ["投资活动产生的现金流量净额", "投资活动现金流量净额"],
+    "netCashProvidedByFinancingActivities": ["筹资活动产生的现金流量净额", "筹资活动现金流量净额"],
 }
 # 三大表的恒等式字段优先 —— 它们才是 A1/A11 的核心
 CORE_FIELDS = ["totalAssets", "totalLiabilities", "totalEquity",
-               "totalCurrentAssets", "totalCurrentLiabilities"]
+               "totalCurrentAssets", "totalCurrentLiabilities",
+               # 利润表
+               "revenue", "operatingIncome", "incomeBeforeTax", "netIncome",
+               # 现金流量表
+               "operatingCashFlow", "netCashProvidedByInvestingActivities",
+               "netCashProvidedByFinancingActivities"]
+
+# 字段 → FMP 报表端点（labeled_facts 据此去对应报表里取值）
+FIELD_STATEMENT = {
+    "totalAssets": "balance-sheet-statement",
+    "totalLiabilities": "balance-sheet-statement",
+    "totalEquity": "balance-sheet-statement",
+    "totalCurrentAssets": "balance-sheet-statement",
+    "totalCurrentLiabilities": "balance-sheet-statement",
+    "totalNonCurrentAssets": "balance-sheet-statement",
+    "totalNonCurrentLiabilities": "balance-sheet-statement",
+    "cashAndCashEquivalents": "balance-sheet-statement",
+    "inventory": "balance-sheet-statement",
+    "totalDebt": "balance-sheet-statement",
+    "revenue": "income-statement",
+    "operatingIncome": "income-statement",
+    "incomeBeforeTax": "income-statement",
+    "netIncome": "income-statement",
+    "operatingCashFlow": "cash-flow-statement",
+    "netCashProvidedByInvestingActivities": "cash-flow-statement",
+    "netCashProvidedByFinancingActivities": "cash-flow-statement",
+}
 
 # 各市场我们的 md 里可能出现的科目名（FMP 字段 → 该市场科目名）。
 # zh=A股简体、ja=日本、zh_tw=台湾繁体、ko=韩国。统一指标时按市场取。
@@ -229,23 +264,40 @@ class FmpSource:
         if not sym:
             return []
         st = self.statements(sym, period)
-        rows = st.get("balance-sheet-statement") or []
-        if not rows:
+        bs_rows = st.get("balance-sheet-statement") or []
+        if not bs_rows:
             return []
 
         if report_period:
             want = str(report_period)[:10]
-            hit = [r for r in rows if str(r.get("date", ""))[:10] == want]
+            hit = [r for r in bs_rows if str(r.get("date", ""))[:10] == want]
             if not hit:
                 # 财年错位（日股 3 月决算常见）→ 不硬凑，返回空，让调用方判"对不齐"
                 return []
             rec = hit[0]
         else:
-            rec = rows[0]
+            rec = bs_rows[0]
+
+        def pick_same(stmt_name):
+            """同期间下取对应报表的行；date 通常和 BS 一致，错位时宁缺不凑。"""
+            rows = st.get(stmt_name) or []
+            if not rows:
+                return None
+            if report_period:
+                want = str(report_period)[:10]
+                for r in rows:
+                    if str(r.get("date", ""))[:10] == want:
+                        return r
+                return None
+            return rows[0]
 
         out = []
         for field in CORE_FIELDS:
-            v = rec.get(field)
+            stmt = FIELD_STATEMENT.get(field, "balance-sheet-statement")
+            r = rec if stmt == "balance-sheet-statement" else pick_same(stmt)
+            if r is None:
+                continue
+            v = r.get(field)
             if isinstance(v, (int, float)) and abs(v) >= 1e6:
                 for lab in FIELD_LABELS.get(field, []):
                     out.append({"label": lab, "label_key": lab,

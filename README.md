@@ -6,6 +6,22 @@ Core principle: **markets with XBRL take the clean path (read structure directly
 
 ---
 
+## v15: A-share table dedup fix (column-count heuristic)
+
+A-share three-line tables (horizontal rules only, no vertical rules) were over-split by `find_tables(strategy="lines")` into 9 columns, truncating wrapped labels ("…的影响" split off) and misaligning values. v15 fixes the table-detection merge:
+
+| Change | Where | Effect |
+|---|---|---|
+| Column-count dedup in the table merge — prefer the handwritten line detector when the boxed table has **>2 more columns** (over-split) | `pdf_to_md._detect_tables` | A-share cash-flow **C1 identity 51.6% → 71.1%**; HuaKang boxed tables (Japan/Taiwan) unaffected |
+| Generic cross-page table merge (bottom-of-page + top-of-next-page + same column count) | `pdf_to_md.convert` | Cross-page tables merged into one table |
+| FMP truth extended to all three statements (income + cash-flow on top of balance sheet) | `fmp_source` | `labeled_facts` returns **12 fields** (was 5 balance-sheet-only) |
+
+Verification on a frozen 52-report A-share test set: the new **C1** metric (cash-flow identity, `期末 = 期初 + 经营 + 投资 + 筹资 + 汇率`) passes on **51.6% → 71.1%** of reports; Japan FMP pairing is unchanged (60% before = after), so the iXBRL path is unaffected.
+
+See `CHANGELOG.md` for the full release notes.
+
+---
+
 ## v14: UK ESEF (new market)
 
 The UK files annual reports in **ESEF iXBRL** — an XHTML wrapper whose layout is a PDF-style text layer (no `<h1>`/`<table>`, text placed by x/y coordinates + font size). v14 adds `_uk_esef_to_md` in `unified_convert.py`: `<table>` → Markdown tables, everything else → paragraphs, `ix:` tags stripped, `<body>` only. Numbers stay verbatim.
