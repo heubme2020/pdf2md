@@ -353,6 +353,13 @@ def _bbox_overlap(a, b, tol=2.0):
     return area_a > 0 and inter / area_a > 0.5   # 覆盖了线条法那张表的过半面积
 
 
+def _bbox_contains(outer, inner, tol=2.0):
+    """inner 的 bbox 是否**基本被 outer 完全包含** —— 用来删「大表里的碎片小表」。"""
+    ox0, oy0, ox1, oy1 = outer
+    ix0, iy0, ix1, iy1 = inner
+    return ix0 >= ox0 - tol and iy0 >= oy0 - tol and ix1 <= ox1 + tol and iy1 <= oy1 + tol
+
+
 def _detect_tables_text(page, min_cols=2, min_rows=2):
     """文本策略检测**无框线**表格（PyMuPDF 的 find_tables）。
 
@@ -468,6 +475,16 @@ def _detect_tables(page):
         if any(_cols(lt) > _cols(t) + 2 for lt in dup):
             out = [lt for lt in out if lt not in dup]
             out.append(t)
+
+    # 去重：文本法会把同一张表拆成「1 张多列大表 + 多张 2 列碎片小表」，碎片 bbox 小、过不了
+    # 50% 面积重叠阈值，全被保留 → 表头重复（A股 dup_ratio 虚高）。按「完全包含 + 列数更少」删碎片。
+    kept = []
+    for t in out:
+        if any(_bbox_contains(lt["bbox"], t["bbox"]) and _cols(lt) > _cols(t)
+               for lt in out if lt is not t):
+            continue
+        kept.append(t)
+    out = kept
     return out
 
 

@@ -57,8 +57,8 @@ def convert_data(exchange, data, meta=None):
         html = data.decode("utf-8", "replace") if isinstance(data, bytes) else data
         return edinet_html.ixbrl_to_md(html, meta)
     if exchange in KR_EXCHANGES:
-        from dart_fetch import dart_xml_to_md
-        xml = data.decode("utf-8", "replace") if isinstance(data, bytes) else data
+        from dart_fetch import dart_xml_to_md, _decode_dart_xml
+        xml = _decode_dart_xml(data) if isinstance(data, bytes) else data
         return dart_xml_to_md(xml, meta)
     if exchange == "lse":
         return _uk_zip_to_md(data, meta)

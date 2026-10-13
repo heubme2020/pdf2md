@@ -70,7 +70,7 @@ FIELD_LABELS = {
     "cashAndCashEquivalents":  ["货币资金"],
     "inventory":               ["存货"],
     "totalDebt":               ["负债合计"],      # 弱同义，可选
-    # 利润表（v15：三大表都要真值）
+    # 利润表（v15/P0 扩展：客户点名「利润表/现金流没解析」）
     "revenue":                 ["营业收入", "营业总收入"],
     "operatingIncome":         ["营业利润"],
     "incomeBeforeTax":         ["利润总额", "税前利润"],
@@ -138,24 +138,26 @@ LABELS_BY_MARKET = {
 }
 
 
-QUANT_DIR = os.environ.get("QUANT_DIR", "")   # 可选：quant 项目路径（本库开源版默认不依赖它）
+QUANT_DIR = r"C:\Users\heubme2024\Desktop\quant"
 
 
 def load_fmp_key():
-    """FMP key 优先从环境变量 `FMP_API_KEY` 读；也可设 `QUANT_DIR` 指向 quant 项目，
-    从其 `config_local.py` 的 `FMP_TOKEN` 读（这是原项目的取 key 方式）。
+    """FMP key 在 quant 项目的 `config_local.py` 里，变量名 `FMP_TOKEN`。
 
-    ⚠️ 本库开源版**不含** quant 项目，也不硬编码任何路径——直接用 `FMP_API_KEY` 即可。
+    ⚠️ **不要用正则去解析 `write_stock_data.py`**（第一版就是这么写的，一直读不到）——
+    那边只有一句 `TOKEN = FMP_TOKEN` 的**转发**，key 本体不在那个文件里：
+        write_stock_data.py:42   from config_local import MYSQL_DSN, FMP_TOKEN
+        config_local.py:15       FMP_TOKEN = <key>
+    直接 import，不解析文本、不打印值。
     """
-    if QUANT_DIR and QUANT_DIR not in sys.path:
+    if QUANT_DIR not in sys.path:
         sys.path.insert(0, QUANT_DIR)
-    if QUANT_DIR:
-        try:
-            from config_local import FMP_TOKEN  # noqa: PLC0415
-            if FMP_TOKEN:
-                return FMP_TOKEN
-        except Exception:  # noqa: BLE001
-            pass
+    try:
+        from config_local import FMP_TOKEN  # noqa: PLC0415
+        if FMP_TOKEN:
+            return FMP_TOKEN
+    except Exception:  # noqa: BLE001
+        pass
     return os.environ.get("FMP_API_KEY", "")
 
 

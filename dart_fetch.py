@@ -29,7 +29,9 @@ import requests
 DART_BASE = "https://opendart.fss.or.kr/api"
 
 # 披露类型 -> list.json 的 pblntf_detail_ty (A003 同时覆盖 Q1/Q3, 靠标题月份区分)
-PBLNTF_DETAIL_TY = {"annual": "A001", "semiannual": "A002", "q1": "A003", "q3": "A003"}
+# C001 = 증권신고서(지분증권) 招股书/证券申报书
+PBLNTF_DETAIL_TY = {"annual": "A001", "semiannual": "A002", "q1": "A003", "q3": "A003",
+                    "prospectus": "C001"}
 
 # 市场分类 corp_cls -> 交易所(对齐 FMP/Yahoo 后缀: KSC=KOSPI .KS, KOE=KOSDAQ .KQ, KNX=KONEX .KN); 丢弃 기타(E)
 CLS_TO_EXCHANGE = {"Y": "ksc", "K": "koe", "N": "knx"}
@@ -145,6 +147,13 @@ def load_companies(api_key, use_cache=True, with_class=True):
         xml_bytes = data
 
     root = ET.fromstring(xml_bytes)
+    # DART 出错返回 HTTP 200 + <result><status>800/020/010</status><message>...（不是 403/非200），
+    # 不检查会静默解析成 0 家（日志「0/0 家」误导）。这里显式识别并告警，且不写缓存、下次重试。
+    st = root.findtext("status")
+    if st and st != "000":
+        print(f"  [corp_cls] DART corpCode.xml 返回 status={st}：{root.findtext('message') or ''}"
+              f"（维护/限流/key 失效，本轮跳过）")
+        return []
     companies = []
     for item in root.findall("list"):
         code = (item.findtext("corp_code") or "").strip()
@@ -158,6 +167,7 @@ def load_companies(api_key, use_cache=True, with_class=True):
         return companies
 
     result = []
+    fail = 0
     for i, c in enumerate(companies):
         cls = fetch_corp_cls(api_key, c["corp_code"])
         exchange = CLS_TO_EXCHANGE.get(cls)
@@ -165,11 +175,15 @@ def load_companies(api_key, use_cache=True, with_class=True):
             c["corp_cls"] = cls
             c["exchange"] = exchange
             result.append(c)
+        else:
+            fail += 1  # 含「查不到分类(E/其它)」和「API 报错(空串)」两种
         if (i + 1) % 200 == 0:
             print(f"  [corp_cls] {i + 1}/{len(companies)} ...")
         time.sleep(0.2)  # 限速
 
     print(f"  [corp_cls] 完成: 保留 {len(result)}/{len(companies)} 家(KOSPI + KOSDAQ + KONEX)")
+    if fail and fail == len(companies):
+        print(f"  [corp_cls] ⚠️ 全部 {fail} 家分类失败——大概率 company.json 被限流(020)或 key 失效，不是真没公司")
     _write_companies_cache(result)
     return result
 
@@ -203,6 +217,19 @@ def fetch_disclosures(api_key, corp_code, bgn_de, end_de, detail_ty=None):
     ]
 
 
+def _decode_dart_xml(body):
+    """DART document.xml 的编码陷阱：XML 声明永远写 utf-8，但**老报告正文实际是 EUC-KR/CP949**。
+
+    实测 2006 年报：按 utf-8 解出 5.9 万个 U+FFFD（韩文全丢），按 cp949 解出 0 个 FFFD。
+    判据用「哪个解码 FFFD 更少」—— 这是最稳的编码自检，不用硬编码年份/报告类型。
+    """
+    utf8 = body.decode("utf-8", errors="replace")
+    if utf8.count("�") == 0:
+        return utf8
+    cp949 = body.decode("cp949", errors="replace")
+    return cp949 if cp949.count("�") < utf8.count("�") else utf8
+
+
 def fetch_document_xml(api_key, rcept_no):
     """document.xml → ZIP → 主 XML 全文字符串(取 ZIP 里不带 _ 后缀的主文件)。"""
     data = _get_bytes(f"{DART_BASE}/document.xml", {"crtfc_key": api_key, "rcept_no": rcept_no})
@@ -211,12 +238,14 @@ def fetch_document_xml(api_key, rcept_no):
             names = z.namelist()
             # 主文件 = rcept_no.xml; 其它 _00760/_00761 是附件明细表
             main = next((n for n in names if n == f"{rcept_no}.xml"), names[0])
-            return z.read(main).decode("utf-8", errors="replace")
-    return data.decode("utf-8", errors="replace")
+            return _decode_dart_xml(z.read(main))
+    return _decode_dart_xml(data)
 
 
 def classify_disclosure(report_nm):
-    """report_nm → doc_type(annual/semiannual/q1/q3), 非目标返回 None。"""
+    """report_nm → doc_type(annual/semiannual/q1/q3/prospectus), 非目标返回 None。"""
+    if "증권신고서" in report_nm or "證券申告書" in report_nm:
+        return "prospectus"
     if "사업보고서" in report_nm or "事業報告書" in report_nm:
         return "annual"
     if "반기보고서" in report_nm or "半期報告書" in report_nm:

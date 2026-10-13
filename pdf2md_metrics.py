@@ -373,7 +373,11 @@ def duplication(md, min_len=20):
     只认完全相同（去掉首尾空白后）的行。改写过的重复抓不到：宁可漏，不愿误报。
     """
     from collections import Counter
-    lines = [l.strip() for l in md.split("\n") if len(l.strip()) >= min_len]
+    # 表格分隔行（`| --- | --- |`）是 markdown 结构标记、不是正文 —— 同列数的表会产生
+    # 完全相同的分隔行，被当成重复行计数，把 A股 的 dup_ratio 虚高到 0.11（实测 147/484 行是它）。
+    _table_sep = re.compile(r"^[\s|:\-]+$")
+    lines = [l.strip() for l in md.split("\n")
+             if len(l.strip()) >= min_len and not _table_sep.match(l.strip())]
     if not lines:
         return {"status": "skip", "reason": f"没有 ≥{min_len} 字的行"}
     counts = Counter(lines)
@@ -478,7 +482,7 @@ def script_profile(md, expect=None):
 
 # ---------------------------------------------------------------- A11 表内算术闭合
 
-_TOTAL_RE = re.compile(r"合\s*计|合\s*計|总\s*计|總\s*計|小\s*计|小\s*計|total", re.I)
+_TOTAL_RE = re.compile(r"合\s*计|合\s*計|总\s*计|總\s*計|小\s*计|小\s*計|\btotal\b", re.I)
 
 # ⚠️ 单元格必须**整格就是一个数**，而且**千分位分组必须合法**。
 #    不能用 parse_number（它是 search，且先把空格全删掉）—— 表里经常有"一格塞了多个数"

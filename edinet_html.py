@@ -42,7 +42,12 @@ _SECTION_DIV_RE = re.compile(r'<div\s[^>]*id="([^"]+)"', re.I)
 
 
 def _toc_titles(html):
-    """从目录里抽 `{锚点: 标题}`。只认 `<a href="#X">`，别的链接忽略。"""
+    """从目录里抽 `{锚点: 标题}`。只认 `<a href="#X">`，别的链接忽略。
+
+    ⚠️ SEC(Workiva) 目录里同一锚点有**三个**链接：`Item 1.` → `Business` → 页码 `1`。
+    原来 `out[anchor]=text` 后写覆盖会取到最后一个（页码），再 `re.sub(r"\s+","")`
+    把 "Part I" 剥成 "PartI" —— 标题退化成 `PartI/1/13/19`。修法三条对台湾零影响
+    （台湾单链接、中文无空格）：跳过纯数字页码、first-wins 取「Item 1.」、折叠而非删空白。"""
     out = {}
     for m in _ANCHOR_LINK_RE.finditer(html):
         anchor = m.group(1).strip()
@@ -51,9 +56,11 @@ def _toc_titles(html):
         inner = m.group(2)
         zh = re.search(r'class="zh"[^>]*>(.*?)</span>', inner, re.S | re.I)
         text = zh.group(1) if zh else re.sub(r"<[^>]+>", " ", inner)
-        text = re.sub(r"\s+", "", text)
-        if anchor and text and len(text) <= 40:
-            out[anchor] = text
+        text = re.sub(r"\s+", " ", text).strip()     # 折叠空白，不删（SEC "Part I" 要留空格）
+        if not text or text.isdigit():
+            continue                                   # 跳过纯数字页码
+        if anchor and len(text) <= 40:
+            out.setdefault(anchor, text)               # first-wins：取「Item 1.」而非页码
     return out
 # 这些标签的内容是"机器可读的壳"，不是给人看的正文，丢掉
 #   ix:header/ix:hidden/ix:references/ix:resources = inline XBRL 的元数据壳
@@ -132,12 +139,19 @@ class _TextWalker(HTMLParser):
 def _merge_signs(cells):
     """把「货币符号单独成格」并回数值格：SEC(Workiva) 把 `$` 单独放一个 td、数字放下一个，
     于是 `$` 和 `35,934` 被拆成两列，值匹配会失败。这里 `$`/`¥` 符号格并回下一格。
-    ⚠️ 只并「纯符号格」—— 不动日本/台湾的 `△`（它可能和数字同格或另有语义）。"""
+    ⚠️ 只并「纯符号格」—— 不动日本/台湾的 `△`（它可能和数字同格或另有语义）。
+
+    ⚠️ 必须**保持列数不变**：`$数值` 放回 `$` 原列（= 表头起始列），数字原列留空。
+    第一版直接 `append(c+next)` 让该行少一列，右补齐后带 `$` 行的数值整体左移一列、跟表头错位
+    （AAPL 资产负债表：Cash 2024 值落到第 8 列、其余行第 9 列，table_footing 求和对不上）。
+    第二版「$ 原列留空、数值原列放 $数值」则让数值右移一列（$ 原列是表头列，数值列是表头下一列）。
+    正确做法是数值并回 `$` 原列、数值原列留空。"""
     out, i = [], 0
     while i < len(cells):
         c = cells[i]
         if c.strip() in ("$", "¥") and i + 1 < len(cells) and cells[i + 1].strip():
-            out.append(c + cells[i + 1])
+            out.append(c + cells[i + 1])      # $ 原列（表头起始列）= $ + 数字
+            out.append("")                    # 数字原列留空，保持列数
             i += 2
         else:
             out.append(c)

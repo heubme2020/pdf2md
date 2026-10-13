@@ -11,7 +11,7 @@
     python pdf2md_bench.py --limit 0            # 不限量（全部 611 份）
     python pdf2md_bench.py --markets ashare     # 只跑 A 股
     python pdf2md_bench.py --workers 4          # 并行（PDF 解析是 CPU 密集）
-    python pdf2md_bench.py --converter pymupdf --out bench_quality_pymupdf.json
+    python pdf2md_bench.py --converter pymupdf_v8 --out bench_quality_pymupdf.json
 
 ## 加新算法
 
@@ -45,9 +45,9 @@ BASE = Path(__file__).resolve().parent
 BENCH = BASE / "bench_pdfs"
 MARKETS = ["ashare", "jp", "tw"]
 
-# 原件存档目录。--from-archive 时从这里抽样；用 ARCHIVE_DIR 环境变量指向你自己的财报 PDF 归档。
+# 原件存档（archive_fetch.py 下到 NAS 的那份）。--from-archive 时从这里抽样。
 # 注意韩国是 DART 的 XML，**不能喂给 pdf2md**，所以不在可抽样市场里。
-ARCHIVE = Path(os.environ.get("ARCHIVE_DIR", "./raw"))
+ARCHIVE = Path(os.environ.get("ARCHIVE_DIR", "Z:/datasinking-data/raw"))
 ARCHIVE_MARKETS = ["ashare", "jp", "tw"]
 
 
@@ -71,7 +71,7 @@ def sample_from_archive(market, n, seed=0):
 
 # ---------------------------------------------------------------- 转换器
 
-def conv_pymupdf(pdf_path, out_path):
+def conv_pymupdf_v8(pdf_path, out_path):
     """VPS 线：当前的转换器（pdf_to_md，线条法 + PyMuPDF）。"""
     import pdf_to_md
     pdf_to_md.convert(pdf_path, out_path)
@@ -95,7 +95,7 @@ def conv_docling(pdf_path, out_path):
 
 
 CONVERTERS = {
-    "pymupdf": conv_pymupdf,   # VPS 线（基线）
+    "pymupdf_v8": conv_pymupdf_v8,   # VPS 线（基线）
     "docling": conv_docling,         # 本地线候选
 }
 
@@ -202,7 +202,7 @@ def show(label, s):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--converter", default="pymupdf", choices=sorted(CONVERTERS))
+    ap.add_argument("--converter", default="pymupdf_v8", choices=sorted(CONVERTERS))
     ap.add_argument("--markets", default=",".join(MARKETS))
     ap.add_argument("--limit", type=int, default=20, help="每个市场跑几份；0 = 不限")
     ap.add_argument("--workers", type=int, default=4, help="并行进程数（PDF 解析是 CPU 密集）")
