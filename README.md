@@ -6,6 +6,23 @@ Core principle: **markets with XBRL take the clean path (read structure directly
 
 ---
 
+## v16: Korea EUC-KR decode + SEC `$`/headings + A-share containment dedup
+
+A full-market data-quality audit (31 checks × 7 stocks per exchange) surfaced a batch of converter bugs. Fixes, at the root:
+
+| Change | Where | Effect |
+|---|---|---|
+| Legacy DART reports declare `utf-8` but are actually EUC-KR — decode by "fewer U+FFFD wins" (fall back to cp949) | `dart_fetch._decode_dart_xml` | Korea legacy reports: ~59,000 U+FFFD → 0 |
+| SEC `$` merged back into its own cell (column count preserved) | `edinet_html._merge_signs` | AAPL balance-sheet columns re-align; `table_footing` sums correctly |
+| SEC TOC headings: skip page numbers, first-write-wins, collapse whitespace | `edinet_html._toc_titles` | `Part I` / `Item 1.` instead of `PartI` / `1` |
+| OTC TOC-table fallback for filings without an `<a href>` TOC | `convert_local._sec_toc_fallback` | OTC reports get `##` section headings |
+| "Fully-contained + fewer columns" fragment dedup | `pdf_to_md._detect_tables` | A-share cross-page header duplication drops |
+| `duplication` ignores `|---|` rows; `_TOTAL_RE` word-bounds `total` | `pdf2md_metrics` | No more false duplicate / "Total Stock Market Index" hits |
+
+See `CHANGELOG.md` for the full release notes.
+
+---
+
 ## v15: A-share table dedup fix (column-count heuristic)
 
 A-share three-line tables (horizontal rules only, no vertical rules) were over-split by `find_tables(strategy="lines")` into 9 columns, truncating wrapped labels ("…的影响" split off) and misaligning values. v15 fixes the table-detection merge:

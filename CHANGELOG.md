@@ -2,22 +2,27 @@
 
 ## v16 — 2026-10-13: Korea EUC-KR decode + SEC `$`/headings + A-share containment dedup
 
-数据质量自测框架（31 题 × 每所 7 股全量审计）揪出的一批转换 bug，按根因修：
+A full-market data-quality audit (31 checks × 7 stocks per exchange) surfaced a batch of converter bugs, fixed at the root:
 
-1. **韩国 DART 老报告乱码**（`dart_fetch._decode_dart_xml` + `unified_convert`）
-   DART `document.xml` 的 XML 声明永远写 `utf-8`，但老报告正文实际是 **EUC-KR**。按 utf-8 解码会解出 5.9 万 U+FFFD（韩文全丢）。修法：按「哪个解码 FFFD 更少」自检，utf-8 解出大量 FFFD 就退回 cp949。老报告 FFFD 5.9 万 → 0，新报告（真 UTF-8）不受影响。
+### What changed
 
-2. **美股 SEC `$` 单独占格致列错位**（`edinet_html._merge_signs`）
-   Workiva 把 `$` 单独放一个 td、数字放下一个。原 `_merge_signs` 并回时少一列、右补齐让带 `$` 行整体左移一列，`table_footing` 求和对不上（AAPL Cash 2024 值落错列）。修法：`$数值` 并回 `$` 原列（=表头起始列）、数字原列留空，保持列数。
+1. **Korea DART legacy-report garbling** (`dart_fetch._decode_dart_xml` + `unified_convert`)
+   DART's `document.xml` always declares `encoding="utf-8"`, but legacy reports (e.g. 2006) are actually **EUC-KR**. Decoding as UTF-8 produced ~59,000 U+FFFD replacement chars (all Hangul lost). Fix: a "whichever decode yields fewer U+FFFD" self-check — fall back to cp949 when UTF-8 floods the output with replacement chars. Legacy reports drop from ~59,000 U+FFFD to 0; new reports (genuine UTF-8) are unaffected.
 
-3. **美股 SEC 标题退化 `PartI/1/13`**（`edinet_html._toc_titles`）
-   SEC 目录里同一锚点有 `Item 1.` → `Business` → 页码 `1` 三个链接，原 `out[anchor]=text` 后写覆盖取到最后一个（页码），`re.sub(r"\s+","")` 把 "Part I" 剥成 "PartI"。修法：跳过纯数字页码、first-wins、折叠空白（对台湾单链接/中文零影响）。
+2. **US SEC `$`-in-its-own-cell column misalignment** (`edinet_html._merge_signs`)
+   Workiva puts `$` in its own `<td>` and the number in the next cell. The old merge collapsed them into one cell, shifting `$`-rows one column left and breaking `table_footing` (AAPL "Cash" 2024 value landed one column off). Fix: merge `$value` back into the `$` cell (the header's start column) and blank the number cell — column count preserved.
 
-4. **美股 OTC 无章节兜底**（`convert_local._sec_toc_fallback`）
-   OTC/小盘文件没有 `<a href>` 目录（TOC 是 `<table>`），标题一个都抽不出。兜底：从转出的目录表认「Item N. / PART I/II/III/IV」行补成 `##` 标题。
+3. **US SEC heading degradation (`PartI/1/13`)** (`edinet_html._toc_titles`)
+   SEC TOCs have three links per anchor (`Item 1.` → `Business` → page `1`). The old `out[anchor]=text` last-write-wins grabbed the page number, and `re.sub(r"\s+","")` turned "Part I" into "PartI". Fix: skip pure-digit page numbers, first-write-wins, collapse (not strip) whitespace — zero impact on Taiwan (single link, no intra-word spaces).
 
-5. **A股跨页表重复**（`pdf_to_md._detect_tables`）
-   文本法把同一张表拆成「1 张多列大表 + 多张 2 列碎片」，碎片 bbox 小、过不了 50% 面积重叠阈值，全被保留 → 表头重复。修法：加 `_bbox_contains`「完全包含 + 列数更少」去重。
+4. **US OTC no-section fallback** (`convert_local._sec_toc_fallback`)
+   OTC/small-cap filings have no `<a href>` TOC (the TOC is a `<table>`), so zero headings were extracted. Fallback: recognize `Item N.` / `PART I/II/III/IV` rows in the emitted TOC table and emit `##` headings.
+
+5. **A-share cross-page table duplication** (`pdf_to_md._detect_tables`)
+   The text strategy split one table into "one wide table + several 2-column fragments"; fragments were too small to hit the 50%-overlap threshold, so all were kept, repeating headers. Fix: `_bbox_contains` "fully-contained + fewer columns" dedup.
+
+6. **Metrics fixes** (`pdf2md_metrics`)
+   `duplication` no longer counts Markdown `|---|` separator rows as repeated content; `_TOTAL_RE` now matches `total` with word boundaries (no more "Dow Jones … Total Stock Market Index" false hits).
 
 ## v15 — 2026-10-11: A-share table dedup fix + FMP 3-statement truth
 
