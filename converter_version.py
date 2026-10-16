@@ -13,4 +13,4 @@
 ⚠️ 版本号必须是**单调递增**的整数。改算法时 bump，别复用旧值 —— 否则
 「版本 == 线上」会让重转判据失效（doc_needs_reprocess 只认 !=）。
 """
-CONVERTER_VERSION = 16  # v16 韩国 EUC-KR 解码 + SEC `$`/标题 + A股跨页表去重；v15 A股三线表 + 跨页合并 + FMP 三大表真值
+CONVERTER_VERSION = 18  # v18 英国 ESEF 布局感知重写 + 巴西 br_xml_to_md + 韩国 EUC-KR 原始字节 + 英文标题/框线表；v17 英国剥壳 + SEC 20-F；v16 韩国 EUC-KR + SEC $/标题 + A股跨页去重

@@ -242,8 +242,28 @@ def fetch_document_xml(api_key, rcept_no):
     return _decode_dart_xml(data)
 
 
+def fetch_document_xml_raw(api_key, rcept_no):
+    """下载 DART document.xml 的**原始字节**（不解码），供存档。
+
+    ⚠️ 存档必须存原始字节、不能解码后存 —— 否则 CP949 的老报告被当 utf-8 解码后
+    存盘，韩文全变 U+FFFD（替换字符），转换时再解码也救不回来（ksc 9000 份空壳的根因）。
+    转换时才由 _decode_dart_xml 解码。
+    """
+    data = _get_bytes(f"{DART_BASE}/document.xml", {"crtfc_key": api_key, "rcept_no": rcept_no})
+    if data[:2] == b"PK":
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            names = z.namelist()
+            main = next((n for n in names if n == f"{rcept_no}.xml"), names[0])
+            return z.read(main)
+    return data
+
+
 def classify_disclosure(report_nm):
     """report_nm → doc_type(annual/semiannual/q1/q3/prospectus), 非目标返回 None。"""
+    # 更正/附件更正公告（[첨부정정]/[정정]）不是财报本体 —— DART 对它们没有 document.xml，
+    # 下载只会拿到 014「文件不存在」错误响应，转换产生空壳（ksc 9000 份空壳的根因）。
+    if "정정" in report_nm or "訂正" in report_nm or "첨부정정" in report_nm:
+        return None
     if "증권신고서" in report_nm or "證券申告書" in report_nm:
         return "prospectus"
     if "사업보고서" in report_nm or "事業報告書" in report_nm:

@@ -126,7 +126,7 @@ def md_tables(md):
 # 「归属于母公司所有者权益合计」被当成「所有者权益合计」而算不平。
 LABELS = {
     "asset": [
-        r"^资产总计", r"^资产合计", r"^資產總計", r"^資産合計", r"^総資産",
+        r"^资产总计", r"^资产合计", r"^資產總計", r"^資産合計", r"^資産の部合計", r"^総資産",
         r"^总资产", r"^資產合計",
     ],
     "liability": [
@@ -135,10 +135,13 @@ LABELS = {
     ],
     # ⚠️ 「归属于母公司所有者权益合计」**不能**用来验恒等式 ——
     #    它不含少数股东权益，资产 ≠ 负债 + 归母权益。必须用**合计**那一行。
+    # ⚠️ 同理，日语的「株主資本合計」是纯资产的**子合计**（不含 OCI / 新株予約権 / 非支配），
+    #    也不能用来验恒等式；日语要用「純資産(の部)合計」。银行报表写「資産の部合計」，
+    #    带「の部」，所以 asset/equity 都要有「の部」变体（liability 原本就有）。
     "equity": [
         r"^所有者权益（或股东权益）合计", r"^所有者权益\(或股东权益\)合计",
         r"^所有者权益合计", r"^股东权益合计",
-        r"^權益總計", r"^權益合計", r"^權益總額", r"^純資産合計", r"^株主資本合計",
+        r"^權益總計", r"^權益合計", r"^權益總額", r"^純資産合計", r"^純資産の部合計",
     ],
 }
 _EXCLUDE_EQUITY = re.compile(
@@ -375,9 +378,14 @@ def duplication(md, min_len=20):
     from collections import Counter
     # 表格分隔行（`| --- | --- |`）是 markdown 结构标记、不是正文 —— 同列数的表会产生
     # 完全相同的分隔行，被当成重复行计数，把 A股 的 dup_ratio 虚高到 0.11（实测 147/484 行是它）。
+    # 表格行（`| 项目 | 2021 年度 |`）同理：多张表结构相同会重复表头/数据行，也不是「正文重复膨胀」。
+    # 「更正前/更正后」的合法对比也会重复 —— 所以这里只认非表格的纯文本行。
     _table_sep = re.compile(r"^[\s|:\-]+$")
+    _table_row = re.compile(r"^\|")
     lines = [l.strip() for l in md.split("\n")
-             if len(l.strip()) >= min_len and not _table_sep.match(l.strip())]
+             if len(l.strip()) >= min_len
+             and not _table_sep.match(l.strip())
+             and not _table_row.match(l.strip())]
     if not lines:
         return {"status": "skip", "reason": f"没有 ≥{min_len} 字的行"}
     counts = Counter(lines)

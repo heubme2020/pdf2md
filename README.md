@@ -6,6 +6,23 @@ Core principle: **markets with XBRL take the clean path (read structure directly
 
 ---
 
+## v18: UK ESEF layout-aware rebuild + Brazil + Korea EUC-KR raw bytes + English reports
+
+Bundled with the held v17 (UK ESEF shell-strip, SEC 20-F Broadridge headings). Converter version → **18**.
+
+| Change | Where | Effect |
+|---|---|---|
+| UK ESEF parsed per real format — pdf2htmlEX `div`s / Workiva CSS classes / bold markers — plus CSS `fs` map and full `html.unescape` | `unified_convert` | UK headings/tables survive; raw `&#…;` entities gone |
+| Brazil XML → Markdown | `unified_convert.br_xml_to_md` | New `br` market |
+| Archive DART **raw bytes**, decode only at convert time | `dart_fetch.fetch_document_xml_raw` | Korea legacy CP949 reports no longer destroyed to U+FFFD |
+| Reject `[첨부정정]`/`[정정]` correction announcements | `dart_fetch.classify_disclosure` | No more empty `ksc` shells |
+| Bold-font heading detection + boxed/line table detection (text method off) | `pdf_to_md` | English reports (Sri Lanka) get headings; prose no longer sliced into columns |
+| B6 dedup + D6 audit question | `pdf2md_metrics` | Fewer false duplicates |
+
+See `CHANGELOG.md` for the full release notes.
+
+---
+
 ## v16: Korea EUC-KR decode + SEC `$`/headings + A-share containment dedup
 
 A full-market data-quality audit (31 checks × 7 stocks per exchange) surfaced a batch of converter bugs. Fixes, at the root:

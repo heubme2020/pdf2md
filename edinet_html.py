@@ -59,7 +59,10 @@ def _toc_titles(html):
         text = re.sub(r"\s+", " ", text).strip()     # 折叠空白，不删（SEC "Part I" 要留空格）
         if not text or text.isdigit():
             continue                                   # 跳过纯数字页码
-        if anchor and len(text) <= 40:
+        # 长度上限放宽到 200：Broadridge 20-F 的长标题（如 "ITEM 14. MATERIAL MODIFICATIONS
+        # TO THE RIGHTS OF SECURITY HOLDERS AND USE OF PROCEEDS" ~82 字）曾被 40 的旧上限误杀，
+        # 导致整个章节拿不到标题。纯数字页码已被上面的 isdigit 挡掉，长度只需挡住病态超长文本。
+        if anchor and len(text) <= 200:
             out.setdefault(anchor, text)               # first-wins：取「Item 1.」而非页码
     return out
 # 这些标签的内容是"机器可读的壳"，不是给人看的正文，丢掉
@@ -75,7 +78,15 @@ _DROP_TAGS = {"script", "style", "head", "meta", "link",
 class _TextWalker(HTMLParser):
     """把一段（不含表格的）HTML 抽成 markdown 文本：标题按 h1–h6、其余按段落。
 
-    `toc`：`{锚点: 标题}` —— 台湾 iXBRL 用它出章节（见 `_toc_titles`）。
+    `toc`：`{锚点: 标题}` —— 台湾 iXBRL / SEC Workiva / SEC Broadridge 用它出章节（见 `_toc_titles`）。
+
+    章节标记的载体跨市场有好几种：
+      · `<h1>`–`<h6>`   —— 日本 EDINET、SEC Donnelley
+      · `<div id="X">`  —— 台湾 MOPS、SEC Workiva（id 是随机哈希，靠目录对齐）
+      · `<a id="X">`/`<a name="X">` —— SEC Broadridge（空锚点，标题正文是紧随其后的粗体块）
+    Broadridge/Workiva 的空锚点后面都跟着一段正文标题（粗体，财务章节还跨多个 <p>），
+    所以「在锚点处发 `## 目录标题` + 跳过紧随其后的粗体块」—— 标题用目录里的完整标题
+    （比正文更全，财务章节正文只有公司名+报表名），粗体正文标题整段跳过避免重复。
     """
 
     def __init__(self, toc=None):
@@ -85,7 +96,8 @@ class _TextWalker(HTMLParser):
         self._buf = []
         self._head = None
         self._drop = 0
-        self._block = False
+        self._had_bold = False     # 自上次 flush 以来出现过 <b>/<strong>
+        self._skip_heading = False # 刚发过 ## 标题，紧随其后的粗体正文标题应跳过
 
     def handle_starttag(self, tag, attrs):
         t = tag.lower()
@@ -96,16 +108,25 @@ class _TextWalker(HTMLParser):
         elif _HEAD_RE.match(t):
             self._flush()
             self._head = int(t[1])
-        elif t == "div":
-            # 台湾：`<div id="BalanceSheet">` → 按目录里的标题发一个 ##
+        elif t == "a":
+            # SEC Broadridge：章节锚点是空标签 `<a id="a_003"></a>`，标题正文紧随其后。
             for k, v in attrs:
-                if k.lower() == "id" and v in self.toc:
+                if k.lower() in ("id", "name") and v in self.toc:
                     self._flush()
                     self.out.append("## " + self.toc[v])
+                    self._skip_heading = True
                     break
-            self._block = True
+        elif t == "div":
+            self._flush()
+            # 台湾 MOPS / SEC Workiva：`<div id="X">` → 按目录里的标题发一个 ##
+            for k, v in attrs:
+                if k.lower() == "id" and v in self.toc:
+                    self.out.append("## " + self.toc[v])
+                    break
         elif t in ("p", "li", "tr", "td", "th"):
-            self._block = True
+            self._flush()
+        elif t in ("b", "strong"):
+            self._had_bold = True
 
     def handle_endtag(self, tag):
         t = tag.lower()
@@ -118,18 +139,26 @@ class _TextWalker(HTMLParser):
     def handle_data(self, data):
         if self._drop:
             return
-        self._buf.append(data)
+        # 折掉字面空白（含源码里的换行、&nbsp;）为单空格 —— SEC Broadridge 封面
+        # 「UNITED\nSTATES」逐词换行的根因。不碰 <br> 追加的 \n（那是真换行）。
+        self._buf.append(re.sub(r"\s+", " ", data))
 
     def _flush(self):
         text = re.sub(r"[ \t　]+", " ", "".join(self._buf))
         text = re.sub(r"\n{2,}", "\n", text).strip()
         self._buf = []
+        bold = self._had_bold
+        self._had_bold = False
         if not text:
             return
         if self._head:
             self.out.append("#" * self._head + " " + text.replace("\n", " "))
-        else:
-            self.out.append(text)
+            return
+        if self._skip_heading:
+            if bold:
+                return                      # 紧随 ## 的粗体正文标题 → 跳过，避免重复
+            self._skip_heading = False      # 非粗体内容开始，结束跳过
+        self.out.append(text)
 
     def close(self):
         super().close()

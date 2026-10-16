@@ -140,6 +140,7 @@ def _is_heading(text, spans):
         if s.get("size", 0) >= HEADING_SIZE and (
             "黑" in font or "Hei" in font or "hei" in font
             or "Goth" in font or "ゴシック" in font or "ゴ" in font  # 日文标题用 Gothic
+            or "Bold" in font or "bold" in font                       # 英文标题加粗（斯里兰卡等）
         ):
             return True
     return False
@@ -485,6 +486,23 @@ def _detect_tables(page):
             continue
         kept.append(t)
     out = kept
+    return out
+
+
+def _detect_tables_en(page):
+    """英文年报（斯里兰卡等）专用：框线法 + 线条法，**关闭文本法**。
+
+    文本法(find_tables strategy="text")会把**多栏英文正文**误判成表格 ——
+    斯里兰卡年报的英文段落被切成「6 列碎片」（Royal Ceramics 那类），
+    整篇 0 个标题、数字串接成超大数。英文年报的表格通常有框线，框线法+线条法够用。
+    """
+    boxed = _detect_tables_boxed(page)
+    lines = _detect_tables_lines(page)
+    out = list(boxed)
+    for t in lines:
+        dup = [lt for lt in out if _bbox_overlap(t["bbox"], lt["bbox"])]
+        if not dup:
+            out.append(t)
     return out
 
 
