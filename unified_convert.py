@@ -27,6 +27,9 @@ from edinet_xbrl import chapter_html as _jp_chapter_html
 PDF_EXCHANGES = {"sse", "szse", "bj"}
 TW_EXCHANGES = {"twse", "tpex"}
 KR_EXCHANGES = {"ksc", "koe", "knx"}
+# 欧洲 ESEF 市场（2026-10-29 从「英国 lse」扩展）：同一套 ESEF 转换，exchange 分开
+ESEF_EXCHANGES = {"lse", "fr", "nl", "be", "it", "es", "se", "dk", "fi", "no", "at",
+                  "pt", "lu", "gr", "pl", "cz", "hu", "is"}
 
 
 def convert(exchange, source_path, meta=None):
@@ -60,7 +63,7 @@ def convert_data(exchange, data, meta=None):
         from dart_fetch import dart_xml_to_md, _decode_dart_xml
         xml = _decode_dart_xml(data) if isinstance(data, bytes) else data
         return dart_xml_to_md(xml, meta)
-    if exchange == "lse":
+    if exchange in ESEF_EXCHANGES:
         return _uk_to_md(data, meta)
     if exchange == "nse":
         xml = data.decode("utf-8", "replace") if isinstance(data, bytes) else data
@@ -135,6 +138,12 @@ def _uk_esef_to_md(html):
     m = re.search(r"<body[^>]*>(.*)</body>", html, re.S | re.I)
     body = m.group(1) if m else html
 
+    # 0.5) 剥 <img>：pdf2htmlEX「自包含」格式把整页图表渲成内联 base64 SVG data URI
+    #      （<img src="data:image/svg+xml;base64,...">），单张 30-80 万字符、一份年报几十张，
+    #      会把 ~1M 字符撑到 ~10M（AstraZeneca 2025 = 26 张 → 9.7M）。图片不属于财报正文，丢弃。
+    body = re.sub(r"<img\b[^>]*>", "", body, flags=re.S | re.I)
+    body = re.sub(r"</img\s*>", "", body, flags=re.I)
+
     # 0.5) 整块剥掉 XBRL 元数据壳（ix:header 里装着 ix:references/ix:resources →
     #       contexts/units/dimensions，即 LEI 码 + 期间日期 + ifrs-full:XXXMember）。
     #       v14 之前只剥 ix: 标签、留着文本，导致全文开头一大片这类噪声（1.36M 字里大部分是它）。
@@ -193,7 +202,17 @@ def _uk_divs_to_md(body):
     """
     import re
     from collections import Counter
-    div_re = re.compile(r'<div class="t ([^"]*)"[^>]*>(.*?)</div>', re.S)
+    # 2021 老 ESEF（如 AstraZeneca）每行文本被空 <div class="_ _N"></div> 定位标记和
+    # <div class="ffN lsN wsN" style="display:inline"> 内联包装打散成碎片。旧 regex
+    # `(.*?)</div>` 非贪婪、在第一个嵌套 </div> 就截断，每行只拿到开头一两个字母。
+    # 修复：先剥空定位 div，再把 t m0 行边界换成占位符，然后删掉所有剩余 div 起止标签
+    # （内联包装），这样每行拿到的是完整文本。
+    # ⚠️ 边界必须用纯控制字符（\x00\x01）—— 不能用带字母的串（如 \x00T\x00）：正文里
+    # 的字母 "T" 会和下一个占位符拼出假分隔符，导致 split 错位、class 泄漏进正文
+    #（"Total Revenue" 的 T 就是这么丢的）。
+    body = re.sub(r'<div class="_[^"]*"[^>]*>\s*</div>', "", body, flags=re.S)
+    body = re.sub(r'<div class="t ([^"]*)"[^>]*>', lambda m: "\x00\x01" + m.group(1) + "\x00", body)
+    body = re.sub(r"</?div[^>]*>", "", body)
 
     def _fs(cls):
         m = re.search(r"fs([0-9a-f]+)", cls)
@@ -208,9 +227,11 @@ def _uk_divs_to_md(body):
         return int(m.group(1), 16) if m else 0
 
     items = []
-    for m in div_re.finditer(body):
-        cls, inner = m.group(1), m.group(2)
-        txt = re.sub(r"<[^>]+>", "", inner).strip()
+    for seg in body.split("\x00\x01")[1:]:
+        if "\x00" not in seg:
+            continue
+        cls, txt = seg.split("\x00", 1)
+        txt = re.sub(r"<[^>]+>", "", txt).strip()
         if not txt:
             continue
         items.append((_y(cls), _fs(cls), _ff(cls), txt))

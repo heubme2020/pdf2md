@@ -125,6 +125,14 @@ class _TextWalker(HTMLParser):
                     break
         elif t in ("p", "li", "tr", "td", "th"):
             self._flush()
+            # SEC Donnelley：章节标题是 `<p id="item_X">`（正文标题写在元素里，字号=正文、
+            # 加粗只是 CSS font-weight，不是 <b>/<strong>）。不能照搬 div/a 的「发 ## + toc 标题」——
+            # 那只能拿到目录里残缺的标题（"Business Description"，丢掉 "Item 1." 前缀）。
+            # 这里把元素当 h2：内容 flush 时自己带 `## `，标题用正文原文（完整）。
+            for k, v in attrs:
+                if k.lower() in ("id", "name") and v in self.toc:
+                    self._head = 2
+                    break
         elif t in ("b", "strong"):
             self._had_bold = True
 
@@ -149,10 +157,12 @@ class _TextWalker(HTMLParser):
         self._buf = []
         bold = self._had_bold
         self._had_bold = False
+        head = self._head
+        self._head = None                 # 标题只覆盖单个元素；空文本也复位，避免泄漏到下一段
         if not text:
             return
-        if self._head:
-            self.out.append("#" * self._head + " " + text.replace("\n", " "))
+        if head:
+            self.out.append("#" * head + " " + text.replace("\n", " "))
             return
         if self._skip_heading:
             if bold:

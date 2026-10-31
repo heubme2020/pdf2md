@@ -65,7 +65,7 @@ ANNUAL_MIN_YEAR = 2019
 # ---------------------------------------------------------------- 样本
 def _parse_ashare(path):
     code = Path(path).parent.name
-    m = re.match(r"(\d{4}-\d{2}-\d{2})_([a-z]+)_(\d+)\.pdf$", Path(path).name)
+    m = re.match(r"([^_]+)_([a-z0-9]+)_(\d+)\.pdf$", Path(path).name)
     if not m:
         return None
     ex = EXCHANGE_BY_PREFIX.get(code[0])

@@ -24,7 +24,10 @@ LLM 友好增强:
 
 import re
 
-import fitz  # pymupdf
+try:
+    import pymupdf as fitz  # PyMuPDF>=1.24 的新模块名，避免 "fitz deprecated" 警告
+except ImportError:
+    import fitz  # 旧版兼容
 
 from table_detect import cluster_rows, detect_hlines, extract_table, table_blocks
 
@@ -32,6 +35,11 @@ from table_detect import cluster_rows, detect_hlines, extract_table, table_block
 # 全量采集时能把日志刷到 GB 级 —— 关掉底层告警, 业务层已用 classify_md 判正文可用性。
 try:
     fitz.TOOLS.mupdf_display_errors(False)
+except Exception:  # noqa: BLE001
+    pass
+# 关掉 "Consider using the pymupdf_layout package" 建议（旧文本提取触发的提示）
+try:
+    fitz.no_recommend_layout()
 except Exception:  # noqa: BLE001
     pass
 
@@ -72,6 +80,15 @@ SOURCE_BY_EXCHANGE = {
     "twse": "公開資訊觀測站 MOPS", "tpex": "公開資訊觀測站 MOPS",
     "hkex": "HKEXnews", "sgx": "SGX",
     "lse": "FCA NSM",
+    "fr": "ESEF (filings.xbrl.org)", "nl": "ESEF (filings.xbrl.org)",
+    "be": "ESEF (filings.xbrl.org)", "it": "ESEF (filings.xbrl.org)",
+    "es": "ESEF (filings.xbrl.org)", "se": "ESEF (filings.xbrl.org)",
+    "dk": "ESEF (filings.xbrl.org)", "fi": "ESEF (filings.xbrl.org)",
+    "no": "ESEF (filings.xbrl.org)", "at": "ESEF (filings.xbrl.org)",
+    "pt": "ESEF (filings.xbrl.org)", "lu": "ESEF (filings.xbrl.org)",
+    "gr": "ESEF (filings.xbrl.org)", "pl": "ESEF (filings.xbrl.org)",
+    "cz": "ESEF (filings.xbrl.org)", "hu": "ESEF (filings.xbrl.org)",
+    "is": "ESEF (filings.xbrl.org)",
     "nse": "NSE / BSE",
 }
 
@@ -403,6 +420,13 @@ def _detect_tables_text(page, min_cols=2, min_rows=2):
             continue
         ncols = max((sum(1 for c in r if c.strip()) for r in rows), default=0)
         if ncols < min_cols:
+            continue
+        # 误检过滤：文本法会把整段正文按对齐拆成「高列数 + 大量空格」的假表
+        #（A股更正公告「本公司及董事会…重大遗漏」被拆成 8 列、非空格子占比只有 14-27%）。
+        # 真表格子基本都填满（>50%），按非空格子占比拒掉假表 → 覆盖率 1.7x 重复的主因。
+        total_cells = sum(len(r) for r in rows)
+        nonempty = sum(1 for r in rows for c in r if c.strip())
+        if total_cells and nonempty / total_cells < 0.5:
             continue
         out.append({"bbox": tuple(t.bbox), "grid": rows})
     return out

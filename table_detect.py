@@ -6,7 +6,10 @@
     python table_detect.py <pdf路径>
 """
 import sys
-import fitz
+try:
+    import pymupdf as fitz  # PyMuPDF>=1.24 新模块名，避免 "fitz deprecated" 警告
+except ImportError:
+    import fitz  # 旧版兼容
 
 
 def detect_hlines(page):
