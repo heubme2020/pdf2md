@@ -27,6 +27,7 @@ MARKET_EXCHANGES = {
     "jpx":    ["jpx"],
     "twse":   ["twse", "tpex"],
     "kr":     ["ksc", "koe", "knx"],
+    "us":     ["nyse", "nasdaq", "otc"],
 }
 
 # exchange 级差异（bj 是 ashare 的子集、knx 是 kr 的子集）—— 抄自 worker 现役 FOCUS_POINTS

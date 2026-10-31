@@ -97,6 +97,26 @@ MAPPING = {
         "audit_report":       ["감사보고서", "감사의견"],
         "risk":               ["위험요소", "리스크 관리"],
     },
+    # 美股 SEC EDGAR：10-K/10-Q 原生标题是 "Item N. ..." 英文。关键词 = 标题的子串，
+    # 供 worker matchSection 命中（匹配已大小写不敏感，词表用 Title Case 便于阅读）。
+    # 交易所 = nyse/nasdaq/otc（见 gen_focus_points.MARKET_EXCHANGES）。
+    "us": {
+        "mda":                ["Management's Discussion and Analysis",
+                               "Management Discussion and Analysis",
+                               "Discussion and Analysis of Financial Condition"],
+        "financial_statements": ["Balance Sheets", "Statements of Earnings",
+                                "Statements of Operations", "Statements of Income",
+                                "Statements of Comprehensive Income", "Statements of Cash Flows",
+                                "Statements of Changes", "Financial Statements"],
+        "notes":              ["Notes to Consolidated Financial Statements",
+                               "Notes to Financial Statements",
+                               "Notes to the Financial Statements"],
+        "audit_report":       ["Report of Independent Registered Public Accounting Firm",
+                               "Independent Auditor"],
+        "risk":               ["Risk Factors"],
+        "governance":         ["Corporate Governance",
+                               "Directors, Executive Officers and Corporate Governance"],
+    },
 }
 
 
